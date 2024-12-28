@@ -1,70 +1,96 @@
 import requests
 from bs4 import BeautifulSoup
-from csv import writer
 from time import sleep
-from random import choice
+import csv
 
-# List to store scraped data
-all_quotes = []
+def scrape_goodreads_quotes():
+    all_quotes = []
+    base_url = "https://www.goodreads.com/quotes"
+    page = 1
 
-# Base URL
-url = "https://www.goodreads.com/quotes"
-
-# Pagination URL
-change_url = "/page/1"
-
-# Scraping loop
-while change_url:
-    # Concatenate URLs and make a request
-    res = requests.get(f"{url}{change_url}", headers={"User-Agent": "Mozilla/5.0"})
-    print(f"Now scraping {url}{change_url}")
-    soup = BeautifulSoup(res.text, "html.parser")
-
-    # Extracting all quote elements
-    quotes = soup.find_all(class_="quote")
-
-    for quote in quotes:
+    while page <= 5:  # Scraping first 5 pages
         try:
-            all_quotes.append({
-                "text": quote.find(class_="quoteText").get_text(strip=True).split("―")[0].strip(),
-                "author": quote.find(class_="authorOrTitle").get_text(strip=True),
-                "bio-link": quote.find("a")["href"]
-            })
-        except AttributeError:
-            # Skip quote if required data is missing
-            continue
+            url = f"{base_url}?page={page}"
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            
+            res = requests.get(url, headers=headers)
+            res.raise_for_status()
+            print(f"Now Scraping {url}")
+            
+            soup = BeautifulSoup(res.text, "html.parser")
+            quote_containers = soup.find_all("div", class_="quoteDetails")
 
-    # Find the next button
-    next_btn = soup.find(class_="next_page")
-    change_url = next_btn["href"] if next_btn and "href" in next_btn.attrs else None
-    sleep(2)
+            for container in quote_containers:
+                try:
+                    # Extract quote text
+                    quote_text_div = container.find("div", class_="quoteText")
+                    if quote_text_div:
+                        quote_parts = quote_text_div.get_text(strip=True).split('―', 1)
+                        quote_text = quote_parts[0].strip().strip('"').strip('"')
+                        
+                        # Extract author
+                        author_span = container.find("span", class_="authorOrTitle")
+                        if author_span:
+                            author = author_span.get_text(strip=True)
+                            
+                            # Extract likes count
+                            likes_span = container.find("div", class_="right")
+                            likes = likes_span.get_text(strip=True).split()[0] if likes_span else "0"
+                            
+                            # Extract tags if available
+                            tags_div = container.find("div", class_="greyText smallText")
+                            tags = tags_div.get_text(strip=True).replace("tags:", "").strip() if tags_div else ""
+                            
+                            all_quotes.append({
+                                "quote": quote_text,
+                                "author": author,
+                                "likes": likes,
+                                "tags": tags
+                            })
+                            
+                except Exception as e:
+                    print(f"Error processing quote: {e}")
+                    continue
+            
+            print(f"Collected {len(all_quotes)} quotes so far...")
+            page += 1
+            sleep(2)  # Rate limiting
+            
+        except requests.RequestException as e:
+            print(f"Error scraping page {page}: {e}")
+            break
+            
+    return all_quotes
 
-# Randomly select a quote
-quote = choice(all_quotes)
-remaining_guess = 4
-print("Here's a quote: ")
-print(quote["text"])
+def save_to_csv(quotes, filename="goodreads_quotes.csv"):
+    """Save the scraped quotes to a CSV file"""
+    try:
+        with open(filename, 'w', newline='', encoding='utf-8') as file:
+            # Define the CSV headers
+            headers = ['quote', 'author', 'likes', 'tags']
+            writer = csv.DictWriter(file, fieldnames=headers)
+            
+            # Write the headers and data
+            writer.writeheader()
+            writer.writerows(quotes)
+            
+        print(f"\nSuccessfully saved {len(quotes)} quotes to {filename}")
+    except Exception as e:
+        print(f"Error saving to CSV: {e}")
 
-guess = ''
-while guess.lower() != quote["author"].lower() and remaining_guess > 0:
-    guess = input(f"Who said this quote? Guesses remaining: {remaining_guess}: ")
+def main():
+    print("Starting Goodreads quote scraper...")
+    quotes = scrape_goodreads_quotes()
     
-    if guess.lower() == quote["author"].lower():
-        print("CONGRATULATIONS!!! YOU GOT IT RIGHT")
-        break
-    remaining_guess -= 1
-
-    if remaining_guess == 3:
-        # Fetch author details for a hint
-        res = requests.get(f"{url}{quote['bio-link']}", headers={"User-Agent": "Mozilla/5.0"})
-        soup = BeautifulSoup(res.text, "html.parser")
-        birth_date = soup.find(class_="author-born-date").get_text(strip=True)
-        birth_place = soup.find(class_="author-born-location").get_text(strip=True)
-        print(f"Here's a hint: The author was born on {birth_date} {birth_place}.")
-    elif remaining_guess == 2:
-        print(f"Here's a hint: The author's first name starts with: {quote['author'][0]}")
-    elif remaining_guess == 1:
-        last_initial = quote["author"].split(" ")[-1][0]
-        print(f"Here's a hint: The author's last name starts with: {last_initial}")
+    if quotes:
+        save_to_csv(quotes)
+        print("\nScraping completed!")
+        print(f"Total quotes collected: {len(quotes)}")
     else:
-        print(f"Sorry, you ran out of guesses. The answer was {quote['author']}.")
+        print("No quotes were collected.")
+
+if __name__ == "__main__":
+    main()
